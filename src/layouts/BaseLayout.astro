@@ -40,7 +40,7 @@ const currentYear = new Date().getFullYear();
       })();
     </script>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
     <meta property="og:site_name" content="deepstack" />
@@ -65,6 +65,26 @@ const currentYear = new Date().getFullYear();
   </head>
   <body class={bodyClass}>
     <a class="skip-link" href="#content">Skip to content</a>
+
+    <!-- Mobile Top Navigation Header -->
+    <header class="mobile-top-header" id="mobile-top-header">
+      <div class="mobile-top-header__brand">
+        <img src="/deepstack.jpeg" alt="Logo" class="mobile-top-header__logo" />
+        <span class="mobile-top-header__title">team - deepstack</span>
+      </div>
+      <button
+        type="button"
+        class="mobile-top-header__menu-btn"
+        id="btn-mobile-menu-toggle"
+        aria-label="Toggle navigation menu"
+      >
+        <span id="mobile-menu-icon" class="mobile-menu-icon">☰</span>
+      </button>
+    </header>
+
+    <!-- Mobile Sidebar Drawer Backdrop -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
     <div class="shell">
       <aside id="site-sidebar" class="sidebar">
         <slot name="sidebar" />
@@ -83,7 +103,7 @@ const currentYear = new Date().getFullYear();
     </div>
 
     <!-- Theme toggle floating button -->
-    <div style="position: fixed; bottom: 20px; left: 20px; z-index: 50;">
+    <div class="floating-theme-toggle-wrap">
       <button
         id="theme-toggle"
         class="icon-button theme-toggle"

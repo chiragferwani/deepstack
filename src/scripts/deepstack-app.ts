@@ -315,11 +315,54 @@ class DeepstackApp {
     this.loginRoot = document.getElementById('login-root');
 
     this.bindLoginEvents();
+    this.bindMobileNavEvents();
 
     if (isAuth()) {
       this.showApp();
     } else {
       this.showLogin();
+    }
+  }
+
+  private bindMobileNavEvents() {
+    const toggleBtn = document.getElementById('btn-mobile-menu-toggle');
+    const backdrop = document.getElementById('sidebar-backdrop');
+
+    toggleBtn?.addEventListener('click', () => {
+      this.toggleMobileMenu();
+    });
+
+    backdrop?.addEventListener('click', () => {
+      this.toggleMobileMenu(false);
+    });
+
+    // Close on escape key
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        this.toggleMobileMenu(false);
+      }
+    });
+  }
+
+  private toggleMobileMenu(open?: boolean) {
+    const sidebar = document.getElementById('site-sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const icon = document.getElementById('mobile-menu-icon');
+
+    if (!sidebar) return;
+
+    const isOpen = open !== undefined ? open : !sidebar.classList.contains('is-mobile-open');
+
+    if (isOpen) {
+      sidebar.classList.add('is-mobile-open');
+      backdrop?.classList.add('is-visible');
+      if (icon) icon.textContent = '✕';
+      document.body.style.overflow = 'hidden';
+    } else {
+      sidebar.classList.remove('is-mobile-open');
+      backdrop?.classList.remove('is-visible');
+      if (icon) icon.textContent = '☰';
+      document.body.style.overflow = '';
     }
   }
 
@@ -382,6 +425,11 @@ class DeepstackApp {
       .join('');
 
     existingSidebar.innerHTML = `
+      <div class="sidebar__drawer-close-row">
+        <span style="font-size: 13px; font-weight: 700; color: var(--muted);">Navigation Menu</span>
+        <button type="button" class="sidebar__drawer-close-btn" id="btn-close-sidebar-drawer" aria-label="Close menu">✕</button>
+      </div>
+
       <div class="sidebar__brand-group">
         <div class="sidebar__brand-header">
           <a class="sidebar__title" href="/">
@@ -412,6 +460,10 @@ class DeepstackApp {
         </span>
       </div>
     `;
+
+    document.getElementById('btn-close-sidebar-drawer')?.addEventListener('click', () => {
+      this.toggleMobileMenu(false);
+    });
   }
 
   private renderSidebar() {
@@ -442,6 +494,11 @@ class DeepstackApp {
       .join('');
 
     sidebar.innerHTML = `
+      <div class="sidebar__drawer-close-row">
+        <span style="font-size: 13px; font-weight: 700; color: var(--muted);">Navigation Menu</span>
+        <button type="button" class="sidebar__drawer-close-btn" id="btn-close-sidebar-drawer" aria-label="Close menu">✕</button>
+      </div>
+
       <div class="sidebar__brand-group">
         <div class="sidebar__brand-header">
           <a class="sidebar__title" href="/" id="btn-brand-home">
@@ -513,17 +570,25 @@ class DeepstackApp {
       </div>
     `;
 
+    document.getElementById('btn-close-sidebar-drawer')?.addEventListener('click', () => {
+      this.toggleMobileMenu(false);
+    });
+
     // Bind sidebar buttons
     document.getElementById('btn-nav-home')?.addEventListener('click', () => {
       this.state.currentView = 'home';
       saveState(this.state);
+      this.toggleMobileMenu(false);
       this.render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
     document.getElementById('btn-nav-team')?.addEventListener('click', () => {
       this.state.currentView = 'team';
       saveState(this.state);
+      this.toggleMobileMenu(false);
       this.render();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
     document.querySelectorAll('[data-project-id]').forEach((btn) => {
@@ -533,16 +598,20 @@ class DeepstackApp {
           this.state.currentView = 'project';
           this.state.activeProjectId = projId;
           saveState(this.state);
+          this.toggleMobileMenu(false);
           this.render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }
       });
     });
 
     document.getElementById('btn-open-add-project-modal')?.addEventListener('click', () => {
+      this.toggleMobileMenu(false);
       this.openAddProjectModal();
     });
 
     document.getElementById('btn-sidebar-logout')?.addEventListener('click', () => {
+      this.toggleMobileMenu(false);
       this.logout();
     });
   }
