@@ -446,21 +446,41 @@ class DeepstackApp {
       if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
         const res = await fetch(`${cloudConfig.upstashUrl}/get/deepstack_state`, {
           headers: { Authorization: `Bearer ${cloudConfig.upstashToken}` },
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(4000)
         });
-        const data = await res.json();
-        if (data && data.result) {
-          remoteState = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.result !== undefined && data.result !== null) {
+            let parsed = data.result;
+            if (Array.isArray(parsed)) parsed = parsed[0];
+            if (typeof parsed === 'string') {
+              try {
+                parsed = JSON.parse(parsed);
+                if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+              } catch {}
+            }
+            if (parsed && Array.isArray(parsed.projects)) {
+              remoteState = parsed;
+            }
+          }
         }
       } else {
         const res = await fetch('/api/sync', {
           headers: { Accept: 'application/json' },
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(4000)
         });
         if (res.ok) {
           const data = await res.json();
           if (data && data.state) {
-            remoteState = data.state;
+            let parsed = data.state;
+            if (typeof parsed === 'string') {
+              try {
+                parsed = JSON.parse(parsed);
+              } catch {}
+            }
+            if (parsed && Array.isArray(parsed.projects)) {
+              remoteState = parsed;
+            }
           }
         }
       }
@@ -496,13 +516,13 @@ class DeepstackApp {
       };
 
       if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
-        await fetch(`${cloudConfig.upstashUrl}/set/deepstack_state`, {
+        await fetch(cloudConfig.upstashUrl, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${cloudConfig.upstashToken}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify([JSON.stringify(payload)])
+          body: JSON.stringify(['SET', 'deepstack_state', JSON.stringify(payload)])
         });
       } else {
         await fetch('/api/sync', {
@@ -520,16 +540,20 @@ class DeepstackApp {
   }
 
   private handleRemoteStateUpdate(remoteState: AppState, shouldPush: boolean = false) {
+    if (!remoteState || !Array.isArray(remoteState.projects)) return;
+
     const remoteHash = this.computeHash(remoteState);
     if (remoteHash === this.lastKnownHash) return;
 
     this.lastKnownHash = remoteHash;
 
     this.state.projects = remoteState.projects;
-    this.state.teamMembers = INITIAL_TEAM_MEMBERS.map((defaultMember) => {
-      const found = remoteState.teamMembers?.find((m) => m.id === defaultMember.id);
-      return found ? { ...found, image: defaultMember.image } : defaultMember;
-    });
+    if (Array.isArray(remoteState.teamMembers) && remoteState.teamMembers.length > 0) {
+      this.state.teamMembers = INITIAL_TEAM_MEMBERS.map((defaultMember) => {
+        const found = remoteState.teamMembers?.find((m) => m.id === defaultMember.id);
+        return found ? { ...found, image: defaultMember.image } : defaultMember;
+      });
+    }
 
     saveLocalState(this.state);
     this.render();

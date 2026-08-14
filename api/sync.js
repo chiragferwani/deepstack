@@ -17,8 +17,16 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const redisUrl =
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.REDIS_REST_API_URL ||
+    process.env.KV_URL;
+  const redisToken =
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.REDIS_REST_API_TOKEN ||
+    process.env.KV_TOKEN;
 
   // Handle GET (Fetch state)
   if (req.method === 'GET') {
@@ -30,9 +38,26 @@ export default async function handler(req, res) {
           }
         });
         const data = await response.json();
-        if (data && data.result) {
-          const parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
-          return res.status(200).json({ success: true, source: 'cloud-kv', state: parsed });
+        if (data && data.result !== undefined && data.result !== null) {
+          let parsed = data.result;
+          // Unpack double-serialized JSON or array wrappers
+          if (Array.isArray(parsed)) parsed = parsed[0];
+          if (typeof parsed === 'string') {
+            try {
+              parsed = JSON.parse(parsed);
+              if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+              if (Array.isArray(parsed) && parsed[0] && typeof parsed[0] === 'string') {
+                parsed = JSON.parse(parsed[0]);
+              }
+            } catch (e) {
+              console.error('JSON parse error in Redis state:', e);
+            }
+          }
+
+          if (parsed && Array.isArray(parsed.projects)) {
+            inMemoryFallbackState = parsed;
+            return res.status(200).json({ success: true, source: 'cloud-kv', state: parsed });
+          }
         }
       } catch (err) {
         console.error('Error reading from Redis KV:', err);
@@ -51,25 +76,34 @@ export default async function handler(req, res) {
   // Handle POST / PUT (Save state)
   if (req.method === 'POST' || req.method === 'PUT') {
     try {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      const stateToSave = body.state || body;
+      let body = req.body;
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch {}
+      }
+
+      const stateToSave = body?.state || body;
 
       if (!stateToSave || !Array.isArray(stateToSave.projects)) {
-        return res.status(400).json({ success: false, error: 'Invalid state format' });
+        return res.status(400).json({ success: false, error: 'Invalid state format: projects array required' });
       }
 
       inMemoryFallbackState = stateToSave;
 
       if (redisUrl && redisToken) {
-        const payload = JSON.stringify(stateToSave);
-        const response = await fetch(`${redisUrl}/set/deepstack_state`, {
+        const stringifiedState = JSON.stringify(stateToSave);
+
+        // Send standardized Redis command: ["SET", "deepstack_state", "<json_string>"]
+        const response = await fetch(redisUrl, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${redisToken}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify([payload])
+          body: JSON.stringify(['SET', 'deepstack_state', stringifiedState])
         });
+
         const result = await response.json();
         return res.status(200).json({ success: true, source: 'cloud-kv', result });
       }
@@ -77,7 +111,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         success: true,
         source: 'serverless-memory',
-        message: 'Saved to memory. For permanent persistence, connect Vercel KV or Upstash Redis in Vercel Storage.'
+        message: 'Saved to memory. Note: Connect Upstash for Redis in Vercel Storage for permanent multi-device sync.'
       });
     } catch (err) {
       console.error('Error saving state:', err);
