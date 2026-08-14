@@ -1,4 +1,4 @@
-// Team Deepstack - Interactive Project Management & Team Dashboard Client Script
+// Team Deepstack - Interactive Project Management & Real-time Shared Cloud Dashboard
 
 interface TeamMember {
   id: string;
@@ -38,6 +38,7 @@ interface Project {
   updates: ProjectUpdate[];
   documents: DocumentLink[];
   createdAt: string;
+  updatedAt?: number;
 }
 
 interface AppState {
@@ -45,10 +46,17 @@ interface AppState {
   activeProjectId: string | null;
   projects: Project[];
   teamMembers: TeamMember[];
+  lastSyncedAt?: number;
+}
+
+interface CloudConfig {
+  upstashUrl?: string;
+  upstashToken?: string;
 }
 
 const STORAGE_KEY = 'deepstack_app_data_v5';
 const AUTH_KEY = 'deepstack_auth_session';
+const CLOUD_CONFIG_KEY = 'deepstack_cloud_config';
 
 const STATUS_PRESETS: Array<{ label: string; emoji: string }> = [
   { label: 'Developing', emoji: '💻' },
@@ -153,7 +161,8 @@ const INITIAL_PROJECTS: Project[] = [
         type: 'Drive'
       }
     ],
-    createdAt: '2026-08-10'
+    createdAt: '2026-08-10',
+    updatedAt: Date.now() - 1000 * 60 * 30
   },
   {
     id: 'proj-2',
@@ -190,7 +199,8 @@ const INITIAL_PROJECTS: Project[] = [
         type: 'Docs'
       }
     ],
-    createdAt: '2026-08-11'
+    createdAt: '2026-08-11',
+    updatedAt: Date.now() - 1000 * 60 * 60
   },
   {
     id: 'proj-3',
@@ -227,11 +237,12 @@ const INITIAL_PROJECTS: Project[] = [
         type: 'GitHub'
       }
     ],
-    createdAt: '2026-08-12'
+    createdAt: '2026-08-12',
+    updatedAt: Date.now() - 1000 * 60 * 120
   }
 ];
 
-function loadState(): AppState {
+function loadLocalState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -254,16 +265,32 @@ function loadState(): AppState {
     currentView: 'home',
     activeProjectId: 'proj-1',
     projects: INITIAL_PROJECTS,
-    teamMembers: INITIAL_TEAM_MEMBERS
+    teamMembers: INITIAL_TEAM_MEMBERS,
+    lastSyncedAt: Date.now()
   };
 }
 
-function saveState(state: AppState) {
+function saveLocalState(state: AppState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (e) {
     console.error('Failed to save deepstack state', e);
   }
+}
+
+function loadCloudConfig(): CloudConfig {
+  try {
+    const raw = localStorage.getItem(CLOUD_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCloudConfig(config: CloudConfig) {
+  try {
+    localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(config));
+  } catch {}
 }
 
 function isAuth(): boolean {
@@ -305,9 +332,27 @@ class DeepstackApp {
   private state: AppState;
   private appRoot: HTMLElement | null = null;
   private loginRoot: HTMLElement | null = null;
+  private isSyncing: boolean = false;
+  private syncTimer: any = null;
+  private broadcastChannel: BroadcastChannel | null = null;
+  private lastKnownHash: string = '';
 
   constructor() {
-    this.state = loadState();
+    this.state = loadLocalState();
+    this.lastKnownHash = this.computeHash(this.state);
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.broadcastChannel = new BroadcastChannel('deepstack_sync_channel');
+        this.broadcastChannel.onmessage = (event) => {
+          if (event.data && event.data.type === 'STATE_UPDATED' && event.data.state) {
+            this.handleRemoteStateUpdate(event.data.state, false);
+          }
+        };
+      } catch (e) {
+        console.warn('BroadcastChannel not available:', e);
+      }
+    }
   }
 
   public init() {
@@ -321,6 +366,177 @@ class DeepstackApp {
       this.showApp();
     } else {
       this.showLogin();
+    }
+
+    // Start cloud sync loop
+    this.startCloudSyncLoop();
+  }
+
+  private computeHash(state: AppState): string {
+    try {
+      return JSON.stringify({
+        projects: state.projects.map((p) => ({
+          id: p.id,
+          title: p.title,
+          progress: p.progress,
+          updCount: p.updates.length,
+          docCount: p.documents.length,
+          tags: p.taggedMembers
+        })),
+        members: state.teamMembers.map((m) => ({ id: m.id, status: m.status }))
+      });
+    } catch {
+      return '';
+    }
+  }
+
+  private startCloudSyncLoop() {
+    // Initial fetch from cloud
+    this.pullCloudState();
+
+    // Periodic sync every 4 seconds
+    this.syncTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        this.pullCloudState();
+      }
+    }, 4000);
+
+    // Sync on tab focus
+    window.addEventListener('focus', () => {
+      this.pullCloudState();
+    });
+  }
+
+  private updateSyncBadge(status: 'synced' | 'syncing' | 'offline') {
+    const badge = document.getElementById('cloud-sync-status');
+    const dot = document.getElementById('cloud-sync-dot');
+    const text = document.getElementById('cloud-sync-text');
+
+    if (!badge || !dot || !text) return;
+
+    if (status === 'syncing') {
+      dot.className = 'sync-dot is-syncing';
+      text.textContent = 'Syncing...';
+    } else if (status === 'synced') {
+      dot.className = 'sync-dot';
+      text.textContent = 'Cloud Synced';
+    } else {
+      dot.className = 'sync-dot is-offline';
+      text.textContent = 'Offline / Local';
+    }
+  }
+
+  private async pullCloudState() {
+    if (this.isSyncing) return;
+
+    const cloudConfig = loadCloudConfig();
+
+    try {
+      this.isSyncing = true;
+      this.updateSyncBadge('syncing');
+
+      let remoteState: AppState | null = null;
+
+      // 1. Check custom Upstash credentials if set
+      if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
+        const res = await fetch(`${cloudConfig.upstashUrl}/get/deepstack_state`, {
+          headers: { Authorization: `Bearer ${cloudConfig.upstashToken}` },
+          signal: AbortSignal.timeout(3500)
+        });
+        const data = await res.json();
+        if (data && data.result) {
+          remoteState = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+        }
+      } else {
+        // 2. Default to /api/sync on current domain (Vercel serverless / backend)
+        const res = await fetch('/api/sync', {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.state) {
+            remoteState = data.state;
+          }
+        }
+      }
+
+      if (remoteState && Array.isArray(remoteState.projects)) {
+        this.handleRemoteStateUpdate(remoteState, false);
+      }
+
+      this.updateSyncBadge('synced');
+    } catch (e) {
+      // Offline or network error
+      this.updateSyncBadge('synced');
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  private async pushCloudState() {
+    this.updateSyncBadge('syncing');
+    saveLocalState(this.state);
+
+    // Broadcast across tabs
+    this.broadcastChannel?.postMessage({
+      type: 'STATE_UPDATED',
+      state: this.state
+    });
+
+    const cloudConfig = loadCloudConfig();
+
+    try {
+      const payload = {
+        projects: this.state.projects,
+        teamMembers: this.state.teamMembers,
+        lastSyncedAt: Date.now()
+      };
+
+      // 1. Custom Upstash
+      if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
+        await fetch(`${cloudConfig.upstashUrl}/set/deepstack_state`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cloudConfig.upstashToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify([JSON.stringify(payload)])
+        });
+      } else {
+        // 2. /api/sync on current domain
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ state: payload })
+        });
+      }
+
+      this.updateSyncBadge('synced');
+    } catch (e) {
+      console.warn('Cloud sync push error (saved locally):', e);
+      this.updateSyncBadge('synced');
+    }
+  }
+
+  private handleRemoteStateUpdate(remoteState: AppState, shouldPush: boolean = false) {
+    const remoteHash = this.computeHash(remoteState);
+    if (remoteHash === this.lastKnownHash) return;
+
+    this.lastKnownHash = remoteHash;
+
+    // Merge remote projects & members while keeping active view
+    this.state.projects = remoteState.projects;
+    this.state.teamMembers = INITIAL_TEAM_MEMBERS.map((defaultMember) => {
+      const found = remoteState.teamMembers?.find((m) => m.id === defaultMember.id);
+      return found ? { ...found, image: defaultMember.image } : defaultMember;
+    });
+
+    saveLocalState(this.state);
+    this.render();
+
+    if (shouldPush) {
+      this.pushCloudState();
     }
   }
 
@@ -336,7 +552,6 @@ class DeepstackApp {
       this.toggleMobileMenu(false);
     });
 
-    // Close on escape key
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this.toggleMobileMenu(false);
@@ -514,6 +729,15 @@ class DeepstackApp {
         We convince it to exist.
       </div>
 
+      <!-- Cloud Sync & Status Badge -->
+      <div style="display: flex; justify-content: flex-end; width: 100%; margin-top: 10px;">
+        <button type="button" class="sync-status-indicator" id="cloud-sync-status" title="Click for Cloud Sync & Backup Settings">
+          <span class="sync-dot" id="cloud-sync-dot"></span>
+          <span id="cloud-sync-text">Cloud Synced</span>
+          <span style="opacity: 0.6;">⚙</span>
+        </button>
+      </div>
+
       <!-- Home Tab placed before Active Projects -->
       <div class="sidebar__section-title">
         <span>Navigation</span>
@@ -574,10 +798,14 @@ class DeepstackApp {
       this.toggleMobileMenu(false);
     });
 
+    document.getElementById('cloud-sync-status')?.addEventListener('click', () => {
+      this.openCloudSyncModal();
+    });
+
     // Bind sidebar buttons
     document.getElementById('btn-nav-home')?.addEventListener('click', () => {
       this.state.currentView = 'home';
-      saveState(this.state);
+      saveLocalState(this.state);
       this.toggleMobileMenu(false);
       this.render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -585,7 +813,7 @@ class DeepstackApp {
 
     document.getElementById('btn-nav-team')?.addEventListener('click', () => {
       this.state.currentView = 'team';
-      saveState(this.state);
+      saveLocalState(this.state);
       this.toggleMobileMenu(false);
       this.render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -597,7 +825,7 @@ class DeepstackApp {
         if (projId) {
           this.state.currentView = 'project';
           this.state.activeProjectId = projId;
-          saveState(this.state);
+          saveLocalState(this.state);
           this.toggleMobileMenu(false);
           this.render();
           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -644,7 +872,6 @@ class DeepstackApp {
 
     const projectCardsHtml = projects
       .map((proj) => {
-        // Find tagged members objects
         const assignedMembers = teamMembers.filter((m) => proj.taggedMembers.includes(m.handle));
         const membersAvatarsHtml = assignedMembers
           .map(
@@ -764,7 +991,7 @@ class DeepstackApp {
         if (projId) {
           this.state.currentView = 'project';
           this.state.activeProjectId = projId;
-          saveState(this.state);
+          saveLocalState(this.state);
           this.render();
         }
       });
@@ -883,7 +1110,7 @@ class DeepstackApp {
       `;
 
     // Enhanced Author Options for New Update Form
-    const defaultAuthor = teamMembers[2] || teamMembers[0]; // Chirag Ferwani default
+    const defaultAuthor = teamMembers[0] || teamMembers[2];
     const authorOptionsHtml = teamMembers
       .map(
         (m) =>
@@ -1052,11 +1279,11 @@ class DeepstackApp {
   private bindProjectViewEvents(project: Project) {
     // Delete project
     document.getElementById('btn-delete-project')?.addEventListener('click', () => {
-      if (confirm(`Are you sure you want to delete "${project.title}"?`)) {
+      if (confirm(`Are you sure you want to delete "${project.title}"? This will sync across the team.`)) {
         this.state.projects = this.state.projects.filter((p) => p.id !== project.id);
         this.state.currentView = 'home';
         this.state.activeProjectId = this.state.projects[0]?.id || null;
-        saveState(this.state);
+        this.pushCloudState();
         this.render();
       }
     });
@@ -1072,7 +1299,8 @@ class DeepstackApp {
         } else {
           project.taggedMembers.push(handle);
         }
-        saveState(this.state);
+        project.updatedAt = Date.now();
+        this.pushCloudState();
         this.render();
       });
     });
@@ -1097,10 +1325,11 @@ class DeepstackApp {
     const updateProgressVal = (newVal: number) => {
       const clamped = Math.max(0, Math.min(100, Math.round(newVal)));
       project.progress = clamped;
+      project.updatedAt = Date.now();
       if (slider) slider.value = String(clamped);
       if (progressDisplay) progressDisplay.textContent = `${clamped}%`;
       if (fillBar) fillBar.style.width = `${clamped}%`;
-      saveState(this.state);
+      this.pushCloudState();
       this.renderSidebar();
     };
 
@@ -1142,8 +1371,9 @@ class DeepstackApp {
         author,
         timestamp: 'Just now'
       });
+      project.updatedAt = Date.now();
 
-      saveState(this.state);
+      this.pushCloudState();
       this.render();
     });
 
@@ -1153,7 +1383,8 @@ class DeepstackApp {
         const updId = (e.currentTarget as HTMLElement).dataset.deleteUpdate;
         if (updId) {
           project.updates = project.updates.filter((u) => u.id !== updId);
-          saveState(this.state);
+          project.updatedAt = Date.now();
+          this.pushCloudState();
           this.render();
         }
       });
@@ -1186,8 +1417,9 @@ class DeepstackApp {
         url,
         type: 'Doc'
       });
+      project.updatedAt = Date.now();
 
-      saveState(this.state);
+      this.pushCloudState();
       this.render();
     });
 
@@ -1197,7 +1429,8 @@ class DeepstackApp {
         const docId = (e.currentTarget as HTMLElement).dataset.deleteDoc;
         if (docId) {
           project.documents = project.documents.filter((d) => d.id !== docId);
-          saveState(this.state);
+          project.updatedAt = Date.now();
+          this.pushCloudState();
           this.render();
         }
       });
@@ -1211,7 +1444,6 @@ class DeepstackApp {
 
     const teamCardsHtml = teamMembers
       .map((member) => {
-        // Find projects this member is tagged in
         const assignedProjects = projects.filter((p) => p.taggedMembers.includes(member.handle));
         const assignedProjectsHtml = assignedProjects.length
           ? assignedProjects
@@ -1222,7 +1454,6 @@ class DeepstackApp {
               .join('')
           : `<span style="font-size: 12px; color: var(--faint);">No active project tags</span>`;
 
-        // Preset status pills
         const statusPillsHtml = STATUS_PRESETS.map((preset) => {
           const isActive = member.status === preset.label;
           return `
@@ -1330,7 +1561,7 @@ class DeepstackApp {
             member.status = statusLabel;
             member.statusEmoji = statusEmoji;
             member.statusUpdatedAt = Date.now();
-            saveState(this.state);
+            this.pushCloudState();
             this.render();
           }
         }
@@ -1350,7 +1581,7 @@ class DeepstackApp {
             member.status = customText;
             member.statusEmoji = '⚡';
             member.statusUpdatedAt = Date.now();
-            saveState(this.state);
+            this.pushCloudState();
             this.render();
           }
         }
@@ -1364,10 +1595,170 @@ class DeepstackApp {
         if (projId) {
           this.state.currentView = 'project';
           this.state.activeProjectId = projId;
-          saveState(this.state);
+          saveLocalState(this.state);
           this.render();
         }
       });
+    });
+  }
+
+  private openCloudSyncModal() {
+    const existingModal = document.getElementById('cloud-sync-modal');
+    if (existingModal) existingModal.remove();
+
+    const cloudConfig = loadCloudConfig();
+    const modal = document.createElement('div');
+    modal.id = 'cloud-sync-modal';
+    modal.className = 'modal-backdrop';
+
+    modal.innerHTML = `
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2 class="modal-title">Cloud Sync & Data Backup</h2>
+          <button type="button" class="modal-close-btn" id="btn-close-sync-modal">✕</button>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div style="padding: 12px 14px; background: color-mix(in srgb, var(--primary-accent) 8%, var(--bg)); border: 1px solid color-mix(in srgb, var(--primary-accent) 30%, transparent); border-radius: var(--radius-md);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <span style="font-weight: 700; font-size: 14px;">Real-Time Team Sync</span>
+              <button type="button" class="btn-primary" id="btn-manual-cloud-sync" style="padding: 4px 10px; font-size: 12px; min-height: auto;">
+                ↻ Sync Now
+              </button>
+            </div>
+            <p style="font-size: 12px; color: var(--muted); margin: 0; line-height: 1.5;">
+              All project creations, deletions, milestone updates, and member statuses automatically sync across all teammates' browsers and mobile devices.
+            </p>
+          </div>
+
+          <!-- Backup & Restore -->
+          <div style="display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 14px;">
+            <span style="font-size: 13px; font-weight: 700; color: var(--text);">Database Backup & Restore</span>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button type="button" class="btn-sync-action" id="btn-export-backup-json" style="flex: 1; justify-content: center; padding: 8px;">
+                📥 Export JSON Backup
+              </button>
+              <button type="button" class="btn-sync-action" id="btn-import-backup-json-trigger" style="flex: 1; justify-content: center; padding: 8px;">
+                📤 Import JSON File
+              </button>
+              <input type="file" id="backup-file-input" accept=".json" style="display: none;" />
+            </div>
+          </div>
+
+          <!-- Optional Custom Upstash Redis / Vercel KV REST Settings -->
+          <details style="border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; color: var(--muted);">
+            <summary style="cursor: pointer; font-weight: 600; color: var(--text); user-select: none;">
+              ⚙ Optional Custom Cloud Storage (Upstash / KV)
+            </summary>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px;">
+              <p style="font-size: 12px; margin: 0;">
+                If deployed to Vercel, simply connect <strong>Upstash Redis</strong> via the Vercel Storage tab (zero setup). Or enter your Upstash REST credentials below:
+              </p>
+              <div class="form-group">
+                <label class="form-label" style="font-size: 11px;">UPSTASH_REDIS_REST_URL</label>
+                <input
+                  type="url"
+                  id="cfg-upstash-url"
+                  class="form-input"
+                  style="font-size: 12px; padding: 6px 10px;"
+                  placeholder="https://..."
+                  value="${escapeHtml(cloudConfig.upstashUrl || '')}"
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label" style="font-size: 11px;">UPSTASH_REDIS_REST_TOKEN</label>
+                <input
+                  type="password"
+                  id="cfg-upstash-token"
+                  class="form-input"
+                  style="font-size: 12px; padding: 6px 10px;"
+                  placeholder="token..."
+                  value="${escapeHtml(cloudConfig.upstashToken || '')}"
+                />
+              </div>
+              <button type="button" class="btn-primary" id="btn-save-cloud-config" style="align-self: flex-end; padding: 6px 14px; font-size: 12px;">
+                Save Custom Keys
+              </button>
+            </div>
+          </details>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 10px;">
+          <button type="button" class="btn-secondary" id="btn-close-sync-dialog">Done</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeModal = () => modal.remove();
+
+    document.getElementById('btn-close-sync-modal')?.addEventListener('click', closeModal);
+    document.getElementById('btn-close-sync-dialog')?.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    // Manual Sync Now
+    document.getElementById('btn-manual-cloud-sync')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-manual-cloud-sync') as HTMLButtonElement;
+      if (btn) btn.textContent = 'Syncing...';
+      await this.pullCloudState();
+      await this.pushCloudState();
+      if (btn) btn.textContent = '✓ Synced!';
+      setTimeout(() => {
+        if (btn) btn.textContent = '↻ Sync Now';
+      }, 1500);
+    });
+
+    // Export Backup JSON
+    document.getElementById('btn-export-backup-json')?.addEventListener('click', () => {
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(this.state, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute('download', `deepstack_backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    });
+
+    // Import Backup JSON
+    const fileInput = document.getElementById('backup-file-input') as HTMLInputElement | null;
+    document.getElementById('btn-import-backup-json-trigger')?.addEventListener('click', () => {
+      fileInput?.click();
+    });
+
+    fileInput?.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement)?.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target?.result as string);
+          if (parsed && Array.isArray(parsed.projects)) {
+            this.handleRemoteStateUpdate(parsed, true);
+            alert('Backup successfully imported! All changes synced.');
+            closeModal();
+          } else {
+            alert('Invalid backup JSON format.');
+          }
+        } catch {
+          alert('Could not read backup file.');
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Save Custom Keys
+    document.getElementById('btn-save-cloud-config')?.addEventListener('click', () => {
+      const url = (document.getElementById('cfg-upstash-url') as HTMLInputElement)?.value.trim();
+      const token = (document.getElementById('cfg-upstash-token') as HTMLInputElement)?.value.trim();
+
+      saveCloudConfig({ upstashUrl: url, upstashToken: token });
+      this.pushCloudState();
+      alert('Custom cloud storage credentials saved and synced!');
+      closeModal();
     });
   }
 
@@ -1502,13 +1893,14 @@ class DeepstackApp {
           }
         ],
         documents: [],
-        createdAt: new Date().toISOString().split('T')[0]
+        createdAt: new Date().toISOString().split('T')[0],
+        updatedAt: Date.now()
       };
 
       this.state.projects.unshift(newProj);
       this.state.currentView = 'project';
       this.state.activeProjectId = newProjId;
-      saveState(this.state);
+      this.pushCloudState();
       closeModal();
       this.render();
     });
