@@ -1034,7 +1034,14 @@
   word-break: break-word;
 }
 
-.btn-delete-item {
+.update-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.btn-edit-item, .btn-delete-item {
   background: transparent;
   border: 0;
   color: var(--faint);
@@ -1047,11 +1054,39 @@
   transition: all 0.18s ease;
   min-width: 32px;
   min-height: 32px;
+  font-size: 14px;
+}
+
+.btn-edit-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .btn-delete-item:hover {
   color: var(--primary-accent);
   background: color-mix(in srgb, var(--primary-accent) 10%, transparent);
+}
+
+.update-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.update-edit-textarea {
+  width: 100%;
+  min-height: 70px;
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
+.update-edit-btns {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .add-update-box {

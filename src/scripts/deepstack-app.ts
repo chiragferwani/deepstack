@@ -345,6 +345,8 @@ class DeepstackApp {
   private broadcastChannel: BroadcastChannel | null = null;
   private lastKnownHash: string = '';
   private selectedAssigneesForNewUpdate: string[] = [];
+  private editingUpdateId: string | null = null;
+  private editingAssignees: string[] = [];
 
   constructor() {
     this.state = loadLocalState();
@@ -1054,13 +1056,82 @@ class DeepstackApp {
       })
       .join('');
 
-    // Build Updates HTML with author profile images & task assignees
+    // Build Updates HTML with author profile images, task assignees, and inline edit mode
     const updatesHtml = project.updates.length
       ? project.updates
           .map((upd) => {
+            const isEditing = this.editingUpdateId === upd.id;
             const authorMember = teamMembers.find((m) => m.handle === upd.author);
             const authorImg = authorMember ? authorMember.image : '/deepstack.jpeg';
             const authorName = authorMember ? authorMember.name : upd.author;
+
+            if (isEditing) {
+              const editAuthorOptions = teamMembers
+                .map(
+                  (m) =>
+                    `<option value="${m.handle}" ${m.handle === upd.author ? 'selected' : ''}>${m.name} (${m.handle})</option>`
+                )
+                .join('');
+
+              const editAssigneeChips = teamMembers
+                .map((m) => {
+                  const isAssigned = this.editingAssignees.includes(m.handle);
+                  return `
+                    <button
+                      type="button"
+                      class="assign-member-tag ${isAssigned ? 'is-assigned' : ''}"
+                      data-toggle-edit-assignee="${m.handle}"
+                    >
+                      <span class="assign-member-avatar"><img src="${m.image}" alt="${m.name}" /></span>
+                      <span>${m.name}</span>
+                    </button>
+                  `;
+                })
+                .join('');
+
+              return `
+                <div class="update-item" data-update-id="${upd.id}" style="border-color: var(--primary-accent); background: color-mix(in srgb, var(--primary-accent) 4%, var(--card-bg));">
+                  <div class="update-item__avatar">
+                    <img src="${authorImg}" alt="${escapeHtml(authorName)}" />
+                  </div>
+                  <div class="update-item__body" style="width: 100%;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+                      <span style="font-weight: 700; font-size: 13px; color: var(--primary-accent);">✎ Edit Milestone Update</span>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 11px; color: var(--muted);">Author:</span>
+                        <select id="edit-update-author-${upd.id}" class="form-input" style="padding: 2px 8px; font-size: 12px; height: auto;">
+                          ${editAuthorOptions}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="update-edit-form">
+                      <textarea
+                        id="edit-update-text-${upd.id}"
+                        class="form-textarea update-edit-textarea"
+                        placeholder="Edit project update..."
+                      >${escapeHtml(upd.text)}</textarea>
+
+                      <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 11px; font-weight: 600; color: var(--muted);">Assigned Members:</span>
+                        <div class="assign-members-selector">
+                          ${editAssigneeChips}
+                        </div>
+                      </div>
+
+                      <div class="update-edit-btns">
+                        <button type="button" class="btn-secondary" data-cancel-edit="${upd.id}" style="padding: 4px 10px; font-size: 12px;">
+                          Cancel
+                        </button>
+                        <button type="button" class="btn-primary" data-save-edit="${upd.id}" style="padding: 4px 12px; font-size: 12px;">
+                          Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }
 
             const assignees = upd.assignedTo || [];
             const assigneesHtml = assignees.length
@@ -1098,14 +1169,24 @@ class DeepstackApp {
                   </div>
                   <p class="update-item__text">${escapeHtml(upd.text)}</p>
                 </div>
-                <button
-                  type="button"
-                  class="btn-delete-item"
-                  data-delete-update="${upd.id}"
-                  title="Delete update"
-                >
-                  ✕
-                </button>
+                <div class="update-item__actions">
+                  <button
+                    type="button"
+                    class="btn-edit-item"
+                    data-edit-update="${upd.id}"
+                    title="Edit update"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-delete-item"
+                    data-delete-update="${upd.id}"
+                    title="Delete update"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             `;
           })
@@ -1476,6 +1557,83 @@ class DeepstackApp {
 
       this.pushCloudState();
       this.render();
+    });
+
+    // Start Edit update
+    document.querySelectorAll('[data-edit-update]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const updId = (e.currentTarget as HTMLElement).dataset.editUpdate;
+        if (updId) {
+          const upd = project.updates.find((u) => u.id === updId);
+          this.editingUpdateId = updId;
+          this.editingAssignees = upd?.assignedTo ? [...upd.assignedTo] : [];
+          this.render();
+        }
+      });
+    });
+
+    // Cancel Edit update
+    document.querySelectorAll('[data-cancel-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.editingUpdateId = null;
+        this.editingAssignees = [];
+        this.render();
+      });
+    });
+
+    // Toggle assignee in edit form
+    document.querySelectorAll('[data-toggle-edit-assignee]').forEach((chip) => {
+      chip.addEventListener('click', (e) => {
+        const handle = (e.currentTarget as HTMLElement).dataset.toggleEditAssignee;
+        if (!handle) return;
+
+        if (this.editingAssignees.includes(handle)) {
+          this.editingAssignees = this.editingAssignees.filter((h) => h !== handle);
+          (e.currentTarget as HTMLElement).classList.remove('is-assigned');
+        } else {
+          this.editingAssignees.push(handle);
+          (e.currentTarget as HTMLElement).classList.add('is-assigned');
+        }
+      });
+    });
+
+    // Save Edit update
+    document.querySelectorAll('[data-save-edit]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const updId = (e.currentTarget as HTMLElement).dataset.saveEdit;
+        if (!updId) return;
+
+        const upd = project.updates.find((u) => u.id === updId);
+        const textarea = document.getElementById(`edit-update-text-${updId}`) as HTMLTextAreaElement | null;
+        const authorSelect = document.getElementById(`edit-update-author-${updId}`) as HTMLSelectElement | null;
+
+        const newText = textarea?.value.trim();
+        if (!newText) {
+          alert('Update text cannot be empty.');
+          return;
+        }
+
+        if (upd) {
+          // Detect any @mention handles typed in text
+          const currentAssignees = [...this.editingAssignees];
+          this.state.teamMembers.forEach((m) => {
+            if (newText.includes(m.handle) && !currentAssignees.includes(m.handle)) {
+              currentAssignees.push(m.handle);
+            }
+          });
+
+          upd.text = newText;
+          if (authorSelect) upd.author = authorSelect.value;
+          upd.assignedTo = currentAssignees.length ? currentAssignees : undefined;
+          upd.timestamp = 'Updated just now';
+          project.updatedAt = Date.now();
+
+          this.editingUpdateId = null;
+          this.editingAssignees = [];
+          this.pushCloudState();
+          this.render();
+        }
+      });
     });
 
     // Delete update
