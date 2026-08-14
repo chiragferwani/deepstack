@@ -1,0 +1,30 @@
+{
+  "title": "team - deepstack",
+  "description": "Project Management & Multi-Project Progress Tracking for Team Deepstack",
+  "defaultLocale": "en",
+  "footer": {
+    "startYear": 2026,
+    "showCurrentYear": true,
+    "copyright": "Team Deepstack · Project Workspace"
+  },
+  "adminOverview": {
+    "publicVisible": false,
+    "hiddenMessage": "Team workspace"
+  },
+  "favicon": {
+    "svg": null,
+    "png": null,
+    "appleTouchIcon": null
+  },
+  "socialLinks": {
+    "github": "https://github.com/chiragferwani/deepstack",
+    "x": "",
+    "email": "deepstack@college.edu",
+    "presetOrder": {
+      "github": 1,
+      "x": 2,
+      "email": 3
+    },
+    "custom": []
+  }
+}

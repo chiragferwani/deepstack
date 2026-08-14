@@ -1,0 +1,64 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import UiIcon from '../components/UiIcon.astro';
+import '../styles/app.css';
+---
+
+<BaseLayout title="deepstack" bodyClass="deepstack-app">
+  <!-- Interactive Client-side App Root -->
+  <div id="app-root" class="app-workspace" style="display: none;">
+    <!-- Rendered dynamically by deepstack-app.ts -->
+  </div>
+
+  <!-- Non-authenticated Login View -->
+  <div id="login-root" class="login-container" style="display: none;">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo-wrapper">
+          <img src="/deepstack.jpeg" alt="team - deepstack logo" class="login-logo-img" />
+        </div>
+        <h1 class="login-title">team - deepstack</h1>
+        <p class="login-subtitle">College Project Management Workspace</p>
+      </div>
+
+      <div id="login-error" class="login-error-msg" role="alert">
+        Invalid credentials. Please verify your User ID and Password.
+      </div>
+
+      <form id="login-form" class="login-form">
+        <div class="form-group">
+          <label for="login-userid" class="form-label">User ID</label>
+          <input
+            type="text"
+            id="login-userid"
+            class="form-input"
+            placeholder="Enter User ID"
+            required
+            autocomplete="username"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="login-password" class="form-label">Password</label>
+          <input
+            type="password"
+            id="login-password"
+            class="form-input"
+            placeholder="Enter Password"
+            required
+            autocomplete="current-password"
+          />
+        </div>
+
+        <button type="submit" class="btn-primary" style="padding: 12px; margin-top: 6px; font-size: 15px;">
+          Authenticate & Enter Workspace
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Client-side Application Script -->
+  <script>
+    import '../scripts/deepstack-app.ts';
+  </script>
+</BaseLayout>
