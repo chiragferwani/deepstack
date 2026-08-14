@@ -1488,6 +1488,143 @@
   gap: 6px;
 }
 
+/* =========================================
+   Task Assignment & Member Profile Tasks
+   ========================================= */
+
+.add-update-assign-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-update-assign-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.assign-members-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.assign-member-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.assign-member-tag:hover {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.assign-member-tag.is-assigned {
+  background: color-mix(in srgb, var(--primary-accent) 14%, var(--bg));
+  border-color: var(--primary-accent);
+  color: var(--primary-accent);
+  font-weight: 600;
+}
+
+.assign-member-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assign-member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.update-assigned-to-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--primary-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary-accent) 25%, transparent);
+  font-size: 11px;
+  color: var(--primary-accent);
+  font-family: var(--font-mono);
+}
+
+.member-assigned-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.member-task-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+
+.member-task-item:hover {
+  border-color: var(--primary-accent);
+}
+
+.member-task-item__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.member-task-item__project-link {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--primary-accent);
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.member-task-item__time {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--faint);
+}
+
+.member-task-item__text {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.45;
+}
+
 .member-project-badge {
   font-size: 12px;
   padding: 4px 10px;

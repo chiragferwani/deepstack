@@ -19,6 +19,7 @@ interface ProjectUpdate {
   text: string;
   author: string;
   timestamp: string;
+  assignedTo?: string[];
 }
 
 interface DocumentLink {
@@ -54,7 +55,7 @@ interface CloudConfig {
   upstashToken?: string;
 }
 
-const STORAGE_KEY = 'deepstack_app_data_v5';
+const STORAGE_KEY = 'deepstack_app_data_v6';
 const AUTH_KEY = 'deepstack_auth_session';
 const CLOUD_CONFIG_KEY = 'deepstack_cloud_config';
 
@@ -132,19 +133,22 @@ const INITIAL_PROJECTS: Project[] = [
         id: 'upd-1',
         text: 'Integrated Extended Kalman Filter for IMU sensor fusion and odometry drift correction.',
         author: '@vrushabhhirap',
-        timestamp: 'Today at 4:30 PM'
+        timestamp: 'Today at 4:30 PM',
+        assignedTo: ['@vrushabhhirap']
       },
       {
         id: 'upd-2',
         text: 'Configured ROS2 Nav2 action server with dynamic costmap layers for obstacle avoidance.',
         author: '@chiragferwani',
-        timestamp: 'Yesterday at 7:15 PM'
+        timestamp: 'Yesterday at 7:15 PM',
+        assignedTo: ['@chiragferwani']
       },
       {
         id: 'upd-3',
         text: 'Benchmarked waypoint latency under 12ms running on NVIDIA Jetson Orin.',
         author: '@vrushabhhirap',
-        timestamp: '2 days ago'
+        timestamp: '2 days ago',
+        assignedTo: ['@vrushabhhirap', '@chiragferwani']
       }
     ],
     documents: [
@@ -176,13 +180,15 @@ const INITIAL_PROJECTS: Project[] = [
         id: 'upd-4',
         text: 'Trained custom YOLOv8 model on 15,000 augmented domain images with 92.4% mAP50.',
         author: '@anushkashinde',
-        timestamp: 'Today at 2:00 PM'
+        timestamp: 'Today at 2:00 PM',
+        assignedTo: ['@anushkashinde']
       },
       {
         id: 'upd-5',
         text: 'Optimized model with TensorRT FP16 quantization achieving 65 FPS on embedded hardware.',
         author: '@chiragferwani',
-        timestamp: 'Yesterday at 9:40 PM'
+        timestamp: 'Yesterday at 9:40 PM',
+        assignedTo: ['@chiragferwani']
       }
     ],
     documents: [
@@ -214,13 +220,15 @@ const INITIAL_PROJECTS: Project[] = [
         id: 'upd-6',
         text: 'Implemented zero-latency binary WebSocket telemetry stream operating at 100Hz.',
         author: '@chiragferwani',
-        timestamp: 'Today at 11:15 AM'
+        timestamp: 'Today at 11:15 AM',
+        assignedTo: ['@chiragferwani']
       },
       {
         id: 'upd-7',
         text: 'Integrated interactive 3D WebGL orientation model and map waypoint plotting.',
         author: '@kshitijjadhav',
-        timestamp: '3 days ago'
+        timestamp: '3 days ago',
+        assignedTo: ['@kshitijjadhav']
       }
     ],
     documents: [
@@ -336,6 +344,7 @@ class DeepstackApp {
   private syncTimer: any = null;
   private broadcastChannel: BroadcastChannel | null = null;
   private lastKnownHash: string = '';
+  private selectedAssigneesForNewUpdate: string[] = [];
 
   constructor() {
     this.state = loadLocalState();
@@ -368,7 +377,6 @@ class DeepstackApp {
       this.showLogin();
     }
 
-    // Start cloud sync loop
     this.startCloudSyncLoop();
   }
 
@@ -381,7 +389,8 @@ class DeepstackApp {
           progress: p.progress,
           updCount: p.updates.length,
           docCount: p.documents.length,
-          tags: p.taggedMembers
+          tags: p.taggedMembers,
+          upds: p.updates.map(u => ({ id: u.id, text: u.text, assign: u.assignedTo }))
         })),
         members: state.teamMembers.map((m) => ({ id: m.id, status: m.status }))
       });
@@ -391,17 +400,14 @@ class DeepstackApp {
   }
 
   private startCloudSyncLoop() {
-    // Initial fetch from cloud
     this.pullCloudState();
 
-    // Periodic sync every 4 seconds
     this.syncTimer = setInterval(() => {
       if (document.visibilityState === 'visible') {
         this.pullCloudState();
       }
     }, 4000);
 
-    // Sync on tab focus
     window.addEventListener('focus', () => {
       this.pullCloudState();
     });
@@ -437,7 +443,6 @@ class DeepstackApp {
 
       let remoteState: AppState | null = null;
 
-      // 1. Check custom Upstash credentials if set
       if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
         const res = await fetch(`${cloudConfig.upstashUrl}/get/deepstack_state`, {
           headers: { Authorization: `Bearer ${cloudConfig.upstashToken}` },
@@ -448,7 +453,6 @@ class DeepstackApp {
           remoteState = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
         }
       } else {
-        // 2. Default to /api/sync on current domain (Vercel serverless / backend)
         const res = await fetch('/api/sync', {
           headers: { Accept: 'application/json' },
           signal: AbortSignal.timeout(3500)
@@ -467,7 +471,6 @@ class DeepstackApp {
 
       this.updateSyncBadge('synced');
     } catch (e) {
-      // Offline or network error
       this.updateSyncBadge('synced');
     } finally {
       this.isSyncing = false;
@@ -478,7 +481,6 @@ class DeepstackApp {
     this.updateSyncBadge('syncing');
     saveLocalState(this.state);
 
-    // Broadcast across tabs
     this.broadcastChannel?.postMessage({
       type: 'STATE_UPDATED',
       state: this.state
@@ -493,7 +495,6 @@ class DeepstackApp {
         lastSyncedAt: Date.now()
       };
 
-      // 1. Custom Upstash
       if (cloudConfig.upstashUrl && cloudConfig.upstashToken) {
         await fetch(`${cloudConfig.upstashUrl}/set/deepstack_state`, {
           method: 'POST',
@@ -504,7 +505,6 @@ class DeepstackApp {
           body: JSON.stringify([JSON.stringify(payload)])
         });
       } else {
-        // 2. /api/sync on current domain
         await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -525,7 +525,6 @@ class DeepstackApp {
 
     this.lastKnownHash = remoteHash;
 
-    // Merge remote projects & members while keeping active view
     this.state.projects = remoteState.projects;
     this.state.teamMembers = INITIAL_TEAM_MEMBERS.map((defaultMember) => {
       const found = remoteState.teamMembers?.find((m) => m.id === defaultMember.id);
@@ -863,7 +862,6 @@ class DeepstackApp {
 
     const { projects, teamMembers } = this.state;
 
-    // Calculate metrics
     const totalProjects = projects.length;
     const avgProgress = totalProjects
       ? Math.round(projects.reduce((acc, p) => acc + p.progress, 0) / totalProjects)
@@ -919,7 +917,7 @@ class DeepstackApp {
                 ? `
                   <div style="font-size: 12px; color: var(--muted); background: var(--bg); padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
                     <div style="display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 10px; color: var(--faint); margin-bottom: 2px;">
-                      <span>Latest Update</span>
+                      <span>Latest Milestone</span>
                       <span>${escapeHtml(latestUpdate.timestamp)}</span>
                     </div>
                     <span style="display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;">${escapeHtml(latestUpdate.text)}</span>
@@ -1032,13 +1030,35 @@ class DeepstackApp {
       })
       .join('');
 
-    // Build Updates HTML with author profile images
+    // Build Updates HTML with author profile images & task assignees
     const updatesHtml = project.updates.length
       ? project.updates
           .map((upd) => {
             const authorMember = teamMembers.find((m) => m.handle === upd.author);
             const authorImg = authorMember ? authorMember.image : '/deepstack.jpeg';
             const authorName = authorMember ? authorMember.name : upd.author;
+
+            const assignees = upd.assignedTo || [];
+            const assigneesHtml = assignees.length
+              ? `
+                <div class="update-assigned-to-pill" title="Assigned task">
+                  <span>🎯 Assigned to:</span>
+                  ${assignees
+                    .map((handle) => {
+                      const m = teamMembers.find((tm) => tm.handle === handle);
+                      const img = m ? m.image : '/deepstack.jpeg';
+                      const name = m ? m.name : handle;
+                      return `
+                        <span style="display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">
+                          <img src="${img}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover;" />
+                          <span>${name}</span>
+                        </span>
+                      `;
+                    })
+                    .join(', ')}
+                </div>
+              `
+              : '';
 
             return `
               <div class="update-item" data-update-id="${upd.id}">
@@ -1050,6 +1070,7 @@ class DeepstackApp {
                     <span class="update-item__author">${escapeHtml(authorName)} <span style="font-weight: 400; opacity: 0.8; font-size: 11px;">(${escapeHtml(upd.author)})</span></span>
                     <span>•</span>
                     <span>${escapeHtml(upd.timestamp)}</span>
+                    ${assigneesHtml}
                   </div>
                   <p class="update-item__text">${escapeHtml(upd.text)}</p>
                 </div>
@@ -1118,6 +1139,23 @@ class DeepstackApp {
       )
       .join('');
 
+    // Assign Member Tags for Update Form
+    const assignMemberTagsHtml = teamMembers
+      .map((m) => {
+        const isAssigned = this.selectedAssigneesForNewUpdate.includes(m.handle);
+        return `
+          <button
+            type="button"
+            class="assign-member-tag ${isAssigned ? 'is-assigned' : ''}"
+            data-toggle-assignee="${m.handle}"
+          >
+            <span class="assign-member-avatar"><img src="${m.image}" alt="${m.name}" /></span>
+            <span>${m.name}</span>
+          </button>
+        `;
+      })
+      .join('');
+
     this.appRoot.innerHTML = `
       <div class="project-view">
         <!-- Project Header -->
@@ -1138,8 +1176,8 @@ class DeepstackApp {
           <!-- Tagged Team Members -->
           <div class="tagged-members-box">
             <div class="tagged-members-box__header">
-              <span class="tagged-members-box__title">Assigned Team Members (${project.taggedMembers.length})</span>
-              <span style="font-size: 11px; color: var(--faint);">Click to tag / untag</span>
+              <span class="tagged-members-box__title">Project Contributors (${project.taggedMembers.length})</span>
+              <span style="font-size: 11px; color: var(--faint);">Click to tag / untag from project</span>
             </div>
             <div class="tagged-members-list">
               ${memberTagsHtml}
@@ -1197,7 +1235,7 @@ class DeepstackApp {
         <div class="section-block">
           <div class="section-block__header">
             <h2 class="section-block__title">
-              <span>Project Updates & Milestones</span>
+              <span>Project Updates & Assigned Tasks</span>
             </h2>
             <span class="section-block__count">${project.updates.length} updates</span>
           </div>
@@ -1206,7 +1244,7 @@ class DeepstackApp {
             ${updatesHtml}
           </div>
 
-          <!-- Add Update Form with Enhanced Author Selector -->
+          <!-- Add Update Form with Author & Task Assignment -->
           <div class="add-update-box">
             <div class="enhanced-author-container">
               <span class="enhanced-author-label">Author:</span>
@@ -1220,15 +1258,26 @@ class DeepstackApp {
               </div>
             </div>
 
+            <!-- Task Assignment selector -->
+            <div class="add-update-assign-box">
+              <div class="add-update-assign-header">
+                <span>🎯 Assign Task To Team Member(s):</span>
+                <span style="font-size: 11px; opacity: 0.7; font-weight: 400;">(Reflects in member's profile)</span>
+              </div>
+              <div class="assign-members-selector" id="assign-members-selector">
+                ${assignMemberTagsHtml}
+              </div>
+            </div>
+
             <textarea
               id="update-text-input"
               class="form-textarea add-update-textarea"
-              placeholder="Write a progress point, milestone achieved, or next step for the team..."
+              placeholder="Write a progress point, milestone achieved, or action item to assign..."
             ></textarea>
 
             <div style="display: flex; justify-content: flex-end;">
               <button type="button" class="btn-primary" id="btn-post-update">
-                <span>Post Update Point</span>
+                <span>Post & Assign Update</span>
               </button>
             </div>
           </div>
@@ -1288,7 +1337,7 @@ class DeepstackApp {
       }
     });
 
-    // Toggle Tagged Members
+    // Toggle Tagged Members for project
     document.querySelectorAll('[data-toggle-tag]').forEach((chip) => {
       chip.addEventListener('click', (e) => {
         const handle = (e.currentTarget as HTMLElement).dataset.toggleTag;
@@ -1302,6 +1351,22 @@ class DeepstackApp {
         project.updatedAt = Date.now();
         this.pushCloudState();
         this.render();
+      });
+    });
+
+    // Toggle Task Assignee Chip in Update Form
+    document.querySelectorAll('[data-toggle-assignee]').forEach((chip) => {
+      chip.addEventListener('click', (e) => {
+        const handle = (e.currentTarget as HTMLElement).dataset.toggleAssignee;
+        if (!handle) return;
+
+        if (this.selectedAssigneesForNewUpdate.includes(handle)) {
+          this.selectedAssigneesForNewUpdate = this.selectedAssigneesForNewUpdate.filter((h) => h !== handle);
+          (e.currentTarget as HTMLElement).classList.remove('is-assigned');
+        } else {
+          this.selectedAssigneesForNewUpdate.push(handle);
+          (e.currentTarget as HTMLElement).classList.add('is-assigned');
+        }
       });
     });
 
@@ -1365,13 +1430,25 @@ class DeepstackApp {
         return;
       }
 
+      // Check if text mentions any handles that weren't clicked in assignee chips
+      const mentionedAssignees = [...this.selectedAssigneesForNewUpdate];
+      this.state.teamMembers.forEach((m) => {
+        if (text.includes(m.handle) && !mentionedAssignees.includes(m.handle)) {
+          mentionedAssignees.push(m.handle);
+        }
+      });
+
       project.updates.unshift({
         id: `upd-${Date.now()}`,
         text,
         author,
-        timestamp: 'Just now'
+        timestamp: 'Just now',
+        assignedTo: mentionedAssignees.length ? mentionedAssignees : undefined
       });
       project.updatedAt = Date.now();
+
+      // Reset assignee selections
+      this.selectedAssigneesForNewUpdate = [];
 
       this.pushCloudState();
       this.render();
@@ -1444,6 +1521,7 @@ class DeepstackApp {
 
     const teamCardsHtml = teamMembers
       .map((member) => {
+        // 1. Projects tagged in
         const assignedProjects = projects.filter((p) => p.taggedMembers.includes(member.handle));
         const assignedProjectsHtml = assignedProjects.length
           ? assignedProjects
@@ -1454,6 +1532,42 @@ class DeepstackApp {
               .join('')
           : `<span style="font-size: 12px; color: var(--faint);">No active project tags</span>`;
 
+        // 2. Specific tasks assigned across all projects
+        const assignedTasks: Array<{ projectId: string; projectTitle: string; update: ProjectUpdate }> = [];
+        projects.forEach((proj) => {
+          proj.updates.forEach((upd) => {
+            if (
+              (upd.assignedTo && upd.assignedTo.includes(member.handle)) ||
+              upd.text.includes(member.handle)
+            ) {
+              assignedTasks.push({
+                projectId: proj.id,
+                projectTitle: proj.title,
+                update: upd
+              });
+            }
+          });
+        });
+
+        const assignedTasksHtml = assignedTasks.length
+          ? assignedTasks
+              .map(
+                (item) => `
+                <div class="member-task-item">
+                  <div class="member-task-item__top">
+                    <button type="button" class="member-task-item__project-link" data-jump-project="${item.projectId}">
+                      📁 ${escapeHtml(item.projectTitle)}
+                    </button>
+                    <span class="member-task-item__time">${escapeHtml(item.update.timestamp)}</span>
+                  </div>
+                  <p class="member-task-item__text">${escapeHtml(item.update.text)}</p>
+                </div>
+              `
+              )
+              .join('')
+          : `<span style="font-size: 12px; color: var(--faint);">No pending assigned tasks</span>`;
+
+        // 3. Preset status pills
         const statusPillsHtml = STATUS_PRESETS.map((preset) => {
           const isActive = member.status === preset.label;
           return `
@@ -1520,9 +1634,20 @@ class DeepstackApp {
               </div>
             </div>
 
-            <!-- Assigned Projects -->
+            <!-- Assigned Tasks & Action Items Section -->
             <div class="member-assigned-projects">
-              <span class="member-assigned-projects__title">Tagged Projects (${assignedProjects.length})</span>
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span class="member-assigned-projects__title">Assigned Tasks (${assignedTasks.length})</span>
+                <span style="font-size: 10px; font-family: var(--font-mono); color: var(--primary-accent);">Active</span>
+              </div>
+              <div class="member-assigned-tasks-list">
+                ${assignedTasksHtml}
+              </div>
+            </div>
+
+            <!-- Tagged Projects -->
+            <div class="member-assigned-projects" style="margin-top: 4px;">
+              <span class="member-assigned-projects__title">Project Tags (${assignedProjects.length})</span>
               <div class="member-project-tags">
                 ${assignedProjectsHtml}
               </div>
@@ -1537,7 +1662,7 @@ class DeepstackApp {
         <div class="team-header">
           <h1 class="team-header__title">Team Deepstack</h1>
           <p class="team-header__desc">
-            College Engineering Team Members & Real-time Live Status Tracker.
+            College Engineering Team Members, Assigned Action Items & Live Status Tracker.
           </p>
         </div>
 
@@ -1588,7 +1713,7 @@ class DeepstackApp {
       });
     });
 
-    // Jump to project from member card
+    // Jump to project from member card / task link
     document.querySelectorAll('[data-jump-project]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const projId = (e.currentTarget as HTMLElement).dataset.jumpProject;
@@ -1597,6 +1722,7 @@ class DeepstackApp {
           this.state.activeProjectId = projId;
           saveLocalState(this.state);
           this.render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }
       });
     });
@@ -1627,7 +1753,7 @@ class DeepstackApp {
               </button>
             </div>
             <p style="font-size: 12px; color: var(--muted); margin: 0; line-height: 1.5;">
-              All project creations, deletions, milestone updates, and member statuses automatically sync across all teammates' browsers and mobile devices.
+              All project creations, deletions, milestone updates, task assignments, and member statuses automatically sync across all teammates' browsers and mobile devices.
             </p>
           </div>
 
@@ -1652,7 +1778,7 @@ class DeepstackApp {
             </summary>
             <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px;">
               <p style="font-size: 12px; margin: 0;">
-                If deployed to Vercel, simply connect <strong>Upstash Redis</strong> via the Vercel Storage tab (zero setup). Or enter your Upstash REST credentials below:
+                If deployed to Vercel, simply connect <strong>Upstash for Redis</strong> via the Vercel Storage tab (zero setup). Or enter your Upstash REST credentials below:
               </p>
               <div class="form-group">
                 <label class="form-label" style="font-size: 11px;">UPSTASH_REDIS_REST_URL</label>
@@ -1835,7 +1961,7 @@ class DeepstackApp {
           </div>
 
           <div class="form-group">
-            <label class="form-label">Assign Team Members</label>
+            <label class="form-label">Assign Project Contributors</label>
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${memberCheckboxesHtml}
             </div>
@@ -1889,7 +2015,8 @@ class DeepstackApp {
             id: `upd-${Date.now()}`,
             text: `Project "${title}" initialized.`,
             author: checkedMembers[0] || '@chiragferwani',
-            timestamp: 'Just now'
+            timestamp: 'Just now',
+            assignedTo: checkedMembers.length ? [checkedMembers[0]] : undefined
           }
         ],
         documents: [],
